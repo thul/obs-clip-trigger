@@ -7,13 +7,16 @@
 //
 // The helper talks back over the same HTTP port: "Stop daemon" calls /shutdown,
 // and a poll of /status makes the icon disappear if the daemon dies on its own.
+// It also watches its stdin pipe: the daemon closes it on exit, which lets the
+// helper dispose the NotifyIcon cleanly instead of being killed and leaving a
+// ghost icon in the tray until the mouse passes over it.
 
 const SCRIPT = `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-$base = '__BASE__'
-$token = '__TOKEN__'
+$base = __BASE__
+$token = __TOKEN__
 
 # Draw the icon at runtime so no image file has to ship with the binary:
 # a blue disc with a white play triangle.
@@ -69,12 +72,28 @@ $quitItem.Add_Click({
 $script:notify.ContextMenuStrip = $menu
 $script:notify.Add_DoubleClick({ Start-Process ($base + '/overlay') })
 
-# If the daemon is stopped from its console instead, take the icon away too.
+# The daemon holds the write end of stdin. When it exits, for any reason, the
+# read completes with EOF and the icon is taken down straight away. The read is
+# started once and only polled, so the message loop never blocks on it.
+$script:stdin = [Console]::OpenStandardInput()
+$script:stdinBuffer = New-Object byte[] 1
+$script:stdinRead = $script:stdin.ReadAsync($script:stdinBuffer, 0, 1)
+
+# Belt and braces: if stdin somehow stays open, a failed /status poll still
+# closes the icon. Short timeout because this runs on the UI thread.
+$script:ticks = 0
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 4000
+$timer.Interval = 500
 $timer.Add_Tick({
+  if ($script:stdinRead.IsCompleted) {
+    $timer.Stop()
+    Close-Tray
+    return
+  }
+  $script:ticks++
+  if ($script:ticks % 8 -ne 0) { return }
   try {
-    Invoke-WebRequest -Uri ($base + '/status') -TimeoutSec 2 -UseBasicParsing | Out-Null
+    Invoke-WebRequest -Uri ($base + '/status') -TimeoutSec 1 -UseBasicParsing | Out-Null
   } catch {
     $timer.Stop()
     Close-Tray
@@ -85,24 +104,48 @@ $timer.Start()
 [System.Windows.Forms.Application]::Run((New-Object System.Windows.Forms.ApplicationContext))
 `;
 
+// Single-quoted PowerShell literal: the only escape is doubling the quote.
+export function psQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+export function buildTrayScript(base: string, token: string): string {
+  return SCRIPT.replaceAll("__BASE__", psQuote(base)).replaceAll("__TOKEN__", psQuote(token));
+}
+
 export type Tray = { stop: () => void };
 
 export function startTray(base: string, token: string): Tray | null {
   if (process.platform !== "win32") return null;
 
-  const script = SCRIPT.replaceAll("__BASE__", base).replaceAll("__TOKEN__", token);
+  const script = buildTrayScript(base, token);
   // -EncodedCommand takes base64 of UTF-16LE, which avoids any quoting problems.
   const encoded = Buffer.from(script, "utf16le").toString("base64");
 
   try {
     const child = Bun.spawn(
       ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
-      // windowsHide starts the helper with CREATE_NO_WINDOW. Without it, a
-      // console-less daemon makes PowerShell allocate a visible console of
-      // its own before -WindowStyle Hidden can take effect.
-      { stdin: "ignore", stdout: "ignore", stderr: "ignore", windowsHide: true },
+      {
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "ignore",
+        // windowsHide starts the helper with CREATE_NO_WINDOW. Without it, a
+        // console-less daemon makes PowerShell allocate a visible console of
+        // its own before -WindowStyle Hidden can take effect.
+        windowsHide: true,
+      },
     );
-    return { stop: () => child.kill() };
+    return {
+      stop: () => {
+        // Closing stdin is the graceful signal; the helper disposes its icon
+        // and exits on its own. Killing it would leave a ghost icon behind.
+        try {
+          child.stdin.end();
+        } catch {
+          child.kill();
+        }
+      },
+    };
   } catch (err) {
     console.error(`warning: could not start the tray icon (${(err as Error).message})`);
     return null;

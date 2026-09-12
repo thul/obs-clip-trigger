@@ -1,7 +1,10 @@
 name: Release
 
-# Pushing a tag such as v1.2.0 builds the Windows executable and attaches it to a
-# GitHub release for that tag.
+# Pushing a tag such as v1.2.0 builds the Windows executable and attaches it,
+# with a SHA-256 checksum, to a GitHub release for that tag.
+#
+# Actions are pinned to commit SHAs (the tag they came from is in the comment)
+# so a moved tag upstream cannot change what runs here.
 on:
   push:
     tags:
@@ -15,30 +18,49 @@ jobs:
     # The --windows-* metadata flags only work when compiling on Windows.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          # Pinned: an unannounced Bun change must not break a release build.
+          bun-version: "1.4.2"
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # package.json is the single source of the version. The tag must agree
+      # with it, otherwise the exe would be stamped with a different number
+      # than the release it is attached to.
+      - name: Check tag matches package.json
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(bun -e 'console.log(require("./package.json").version)')"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG does not match package.json version $PKG" >&2
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: bun run typecheck
 
       - name: Test
         run: bun test
 
-      # The tag (v1.2.0) becomes the file version (1.2.0.0) stamped into the exe.
       - name: Build
+        run: bun run build
+
+      - name: Checksum
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          bun build --compile --minify --target=bun-windows-x64 \
-            --windows-hide-console \
-            --windows-title="OBS Video Trigger" \
-            --windows-description="Plays a clip once in an OBS browser source" \
-            --windows-version="${VERSION}.0" \
-            --outfile dist/obs-video-trigger.exe src/main.ts
-          ls -l dist
+          cd dist
+          sha256sum obs-video-trigger.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          files: dist/obs-video-trigger.exe
+          files: |
+            dist/obs-video-trigger.exe
+            dist/SHA256SUMS.txt
           generate_release_notes: true

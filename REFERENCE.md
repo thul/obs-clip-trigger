@@ -341,7 +341,8 @@ The overlay is a Chromium browser, so it plays what Chromium plays:
 |---|---|
 | `.mp4` (H.264 / AAC) | Safest choice for fullscreen clips. No transparency. |
 | `.webm` (VP9 / VP8) | Safest choice for overlays. Supports an alpha channel. |
-| `.mov`, `.m4v`, `.mkv`, `.avi`, `.ogv` | Work if the codec inside is one Chromium decodes (H.264, VP8, VP9, AV1). |
+| `.mov`, `.m4v`, `.mkv`, `.ogv` | Work if the codec inside is one Chromium decodes (H.264, VP8, VP9, AV1). |
+| `.avi` | Not served. The codecs usually found in AVI (DivX, Xvid, MJPEG) do not play in Chromium; convert to MP4 or WebM. |
 
 **Transparency.** Only WebM carries alpha. An MP4 logo sting will show a black
 rectangle. Convert with [ffmpeg](https://ffmpeg.org):
@@ -367,7 +368,7 @@ Base URL: `http://127.0.0.1:4466` (or whatever `--host`/`--port` the daemon uses
 
 | Method | Path | Parameters | Reply |
 |---|---|---|---|
-| `GET` / `POST` | `/play` | `file` (required) — absolute or relative path on the daemon's machine. `volume` (0–1). `fit` (`contain`, `cover`, `fill`). | `{"ok":true,"file":"<absolute path>","overlays":<n>}` or `404 {"ok":false,"error":"no such file: ..."}` |
+| `GET` / `POST` | `/play` | `file` (required) — absolute path on the daemon's machine. `volume` (0–1). `fit` (`contain`, `cover`, `fill`; anything else falls back to `contain`). | `{"ok":true,"file":"<absolute path>","overlays":<n>}`, `400` for a missing or relative `file`, `404 {"ok":false,"error":"no such file: ..."}` |
 | `GET` / `POST` | `/stop` | — | `{"ok":true,"overlays":<n>}` |
 | `GET` | `/status` | — | `{"ok":true,"overlays":<n>,"clips":<n>,"port":<n>}` |
 | `GET` | `/overlay` | `debug=1` (optional) | The overlay HTML page |
@@ -376,6 +377,12 @@ Base URL: `http://127.0.0.1:4466` (or whatever `--host`/`--port` the daemon uses
 | `POST` | `/shutdown` | `token` (required) | `{"ok":true}` then the daemon exits. `403` on a bad token. |
 
 `POST` bodies may be JSON with the same parameter names.
+
+`/play` and `/stop` answer `403` to requests that a browser labels as coming from another
+website (a `Sec-Fetch-Site` header other than `none` or `same-origin`). Typing the URL
+into the address bar, a Stream Deck, curl and the CLI are unaffected. Every endpoint
+answers `403` when the `Host` header is not a loopback name while the daemon is bound to
+loopback; see [Security](#security).
 
 The shutdown token is random per run and known only to the tray helper. Set the
 `OBS_VIDEO_TRIGGER_TOKEN` environment variable before starting the daemon to choose it
@@ -395,9 +402,17 @@ curl -X POST "http://127.0.0.1:4466/shutdown?token=mysecret"
 - The daemon listens on `127.0.0.1` by default: only programs on the same PC can reach it.
   `--host 0.0.0.0` opens it to your network; do that only on a network you trust, because
   anyone on it could then play any file the daemon's user can read.
+- Web pages open in your own browser can also reach `127.0.0.1`. Two checks keep a page
+  from another site out: `/play` and `/stop` refuse requests the browser labels as
+  cross-site (`Sec-Fetch-Site`), and on a loopback bind every request must carry a loopback
+  `Host` header, which defeats DNS rebinding (a hostname the attacker points at
+  `127.0.0.1`). The `Host` check is skipped when you bind to a network address, because
+  you then want to be reached by name or LAN IP.
 - `/media/<id>` serves only files that have been triggered through `/play`. The overlay
   page cannot be used to browse or fetch arbitrary files.
-- `/shutdown` requires the per-run token.
+- `/shutdown` requires the per-run token. The token is passed to the tray helper on its
+  command line, so it guards against web pages, not against other programs running as
+  the same Windows user (which could simply end the process anyway).
 - Nothing leaves the machine. No telemetry, no updates, no accounts.
 
 ---

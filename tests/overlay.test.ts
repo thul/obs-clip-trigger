@@ -29,7 +29,8 @@ function fakeElement() {
     removeAttribute(name: string) {
       if (name === "src") this.src = "";
     },
-    play: () => Promise.resolve(),
+    playResult: Promise.resolve() as Promise<void>,
+    play() { return this.playResult; },
     pause: () => {},
     load: () => {},
     visible: () => classes.has("visible"),
@@ -40,21 +41,29 @@ type Harness = {
   player: ReturnType<typeof fakeElement>;
   send: (event: unknown) => void;
   reloads: () => number;
+  debug: () => boolean;
 };
 
-function loadOverlay(): Harness {
+function loadOverlay(search = ""): Harness {
   const script = OVERLAY_HTML.split("<script>")[1]!.split("</script>")[0]!;
 
   const player = fakeElement();
   const statusBox = fakeElement();
   let onmessage: ((event: { data: string }) => void) | null = null;
 
+  const bodyClasses = new Set<string>();
   const document = {
     getElementById: (id: string) => (id === "player" ? player : statusBox),
-    body: { classList: { add() {}, remove() {}, contains: () => false } },
+    body: {
+      classList: {
+        add: (name: string) => bodyClasses.add(name),
+        remove: (name: string) => bodyClasses.delete(name),
+        contains: (name: string) => bodyClasses.has(name),
+      },
+    },
   };
   let reloads = 0;
-  const location = { search: "", reload: () => { reloads += 1; } };
+  const location = { search, reload: () => { reloads += 1; } };
   class EventSource {
     onmessage: ((event: { data: string }) => void) | null = null;
     onopen: (() => void) | null = null;
@@ -66,15 +75,21 @@ function loadOverlay(): Harness {
     }
   }
 
-  new Function("document", "location", "EventSource", script)(document, location, EventSource);
+  new Function("document", "location", "EventSource", "URLSearchParams", script)(
+    document,
+    location,
+    EventSource,
+    URLSearchParams,
+  );
 
   return {
     player,
     send(event: unknown) {
-      const source = onmessage ?? (null as never);
-      source({ data: JSON.stringify(event) });
+      if (!onmessage) throw new Error("overlay never attached its onmessage handler");
+      onmessage({ data: JSON.stringify(event) });
     },
     reloads: () => reloads,
+    debug: () => bodyClasses.has("debug"),
   };
 }
 
@@ -193,4 +208,47 @@ test("a hello does not disturb the clip that is playing", () => {
   overlay.send({ type: "hello", version: "__OVERLAY_VERSION__" });
   expect(overlay.player.visible()).toBe(true);
   expect(overlay.player.src).toBe("/media/1");
+});
+
+// play() rejects with AbortError when a new src interrupts it. That rejection
+// belongs to the clip that was replaced and must not touch the new one.
+test("a replaced clip's aborted play() does not mute the new clip", async () => {
+  const aborted = Object.assign(new Error("interrupted"), { name: "AbortError" });
+  overlay.player.playResult = Promise.reject(aborted);
+  overlay.send(CLIP_A);
+  overlay.player.playResult = Promise.resolve();
+  overlay.send(CLIP_B);
+  await new Promise((done) => setTimeout(done, 0));
+  expect(overlay.player.src).toBe("/media/2");
+  expect(overlay.player.muted).toBe(false);
+  expect(overlay.player.visible()).toBe(true);
+});
+
+test("a genuine autoplay block retries muted", async () => {
+  const blocked = Object.assign(new Error("blocked"), { name: "NotAllowedError" });
+  overlay.player.playResult = Promise.reject(blocked);
+  overlay.send(CLIP_A);
+  overlay.player.playResult = Promise.resolve();
+  await new Promise((done) => setTimeout(done, 0));
+  expect(overlay.player.muted).toBe(true);
+  expect(overlay.player.visible()).toBe(true);
+});
+
+test("an autoplay block that lands after a replacement is ignored", async () => {
+  const blocked = Object.assign(new Error("blocked"), { name: "NotAllowedError" });
+  overlay.player.playResult = Promise.reject(blocked);
+  overlay.send(CLIP_A);
+  overlay.player.playResult = Promise.resolve();
+  overlay.send(CLIP_B);
+  await new Promise((done) => setTimeout(done, 0));
+  expect(overlay.player.muted).toBe(false);
+  expect(overlay.player.src).toBe("/media/2");
+});
+
+test("?debug=1 turns the status box on", () => {
+  expect(loadOverlay("?debug=1").debug()).toBe(true);
+});
+
+test("a parameter merely containing 'debug' does not", () => {
+  expect(loadOverlay("?file=debugging.mp4").debug()).toBe(false);
 });

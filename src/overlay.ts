@@ -53,10 +53,13 @@ export const OVERLAY_HTML = `<!doctype html>
   var statusBox = document.getElementById('status');
   var playing = false;
   var currentFile = null;
+  // Bumped on every play/hide so a late play() rejection from a clip that has
+  // already been replaced can be told apart from one for the current clip.
+  var generation = 0;
   var PAGE_VERSION = '__OVERLAY_VERSION__';
 
   // Add ?debug=1 to the browser source URL to see connection state on screen.
-  if (location.search.indexOf('debug') !== -1) document.body.classList.add('debug');
+  if (new URLSearchParams(location.search).has('debug')) document.body.classList.add('debug');
 
   function status(text) { statusBox.textContent = text; }
 
@@ -67,12 +70,14 @@ export const OVERLAY_HTML = `<!doctype html>
     player.load();
     playing = false;
     currentFile = null;
+    generation++;
     status('waiting');
   }
 
   function play(event) {
     playing = true;
     currentFile = event.file;
+    var mine = ++generation;
     player.style.objectFit = event.fit || 'contain';
     player.volume = typeof event.volume === 'number' ? event.volume : 1;
     player.muted = false;
@@ -82,6 +87,9 @@ export const OVERLAY_HTML = `<!doctype html>
     var started = player.play();
     if (started && started.catch) {
       started.catch(function (err) {
+        // A newer clip (or a stop) has taken over: this rejection is stale.
+        // Replacing the source aborts the pending play() with AbortError.
+        if (mine !== generation || err.name === 'AbortError') return;
         // OBS allows autoplay with sound; a normal browser may not. Retry muted
         // so the clip is still shown rather than silently skipped.
         status('autoplay blocked (' + err.name + '), retrying muted');

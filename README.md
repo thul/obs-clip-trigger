@@ -3,7 +3,7 @@
 A single Windows executable that plays a video clip **once** in an OBS browser source —
 fullscreen, unmuted, no controls — and leaves the source transparent again when the clip
 ends. Triggered by opening a URL or running the binary with a path, so it works from a
-Stream Deck, a chat bot, a batch file, or anything else that can open a URL.
+Stream Deck, a chat bot, a batch file, or anything else that can open and reach the URL.
 
 - One static `.exe`, no runtime, no installer, no config file.
 - Runs as a background daemon with a tray icon.
@@ -19,16 +19,19 @@ Stream Deck, a chat bot, a batch file, or anything else that can open a URL.
 
 ## Build
 
-Requires [Bun](https://bun.sh) 1.1 or newer on the build machine only.
+Requires [Bun](https://bun.sh) 1.4 or newer on the build machine only.
 
 ```
+bun install
 bun run build
 ```
 
 Produces `dist/obs-video-trigger.exe` (~86 MB — it embeds the Bun runtime). The build
 targets `bun-windows-x64` and uses `--windows-hide-console`, so neither the daemon nor a
 trigger ever opens a console window; output still appears when run from an existing
-terminal.
+terminal. The file version stamped into the exe is taken from `package.json`; the release
+workflow refuses a tag that does not match it. Releases ship a `SHA256SUMS.txt` next to
+the exe, so a download can be checked with `certutil -hashfile obs-video-trigger.exe SHA256`.
 
 The binary is unsigned, so Windows shows "Windows protected your PC" the first time a
 downloaded copy runs. Two ways past it:
@@ -39,27 +42,21 @@ downloaded copy runs. Two ways past it:
   removes the "downloaded from the internet" mark, and SmartScreen no longer asks.
   Equivalent in PowerShell: `Unblock-File .obs-video-trigger.exe`.
 
-Extracting with 7-Zip instead of Windows Explorer also skips the mark.
-
-## Release
-
-Push a tag and GitHub Actions builds the executable and attaches it to a release:
-
-```
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-The tag becomes the file version stamped into the exe (`v1.2.0` → `1.2.0.0`). See
-`.github/workflows/release.yml`.
-
 ## Develop
 
 ```
 bun run src/main.ts            # daemon from source, tray icon included
 bun run src/main.ts --play x   # trigger from source
-bun test                       # overlay behaviour tests
+bun test                       # overlay, daemon, CLI and parser tests
+bun run typecheck              # tsc --noEmit
+bun run check                  # both
 ```
+
+Layout: `src/main.ts` is the process boundary (arguments, exit codes, tray, signals);
+`src/server.ts` is the HTTP daemon, `src/client.ts` the `--play`/`--stop`/`--status`
+side, `src/args.ts` and `src/range.ts` the pure parsers, `src/overlay.ts` the browser page
+and `src/tray.ts` the PowerShell tray helper. Tests start the daemon on a random port and
+talk to it over real HTTP.
 
 The daemon stamps the overlay page with a hash of its HTML and announces that version on
 the event stream, so an overlay left open in OBS reloads itself after a rebuild.
@@ -90,10 +87,14 @@ Stream Deck ──GET /play?file=…──▶ daemon (127.0.0.1:4466) ──SSE�
    on `ended`. A second `play` for the same file toggles it off; any other file replaces
    it.
 4. Only files that have been registered through `/play` are served from `/media`, so the
-   page cannot be used to read arbitrary files.
+   page cannot be used to read arbitrary files. Browser requests from other sites are
+   refused on `/play` and `/stop`, and a non-loopback `Host` header is refused everywhere
+   while bound to loopback, so a web page cannot fire clips or read files through a
+   DNS-rebinding trick.
 5. The tray icon is a hidden `powershell.exe` running a Windows Forms `NotifyIcon`. "Stop
-   daemon" calls `/shutdown` with a per-run token; if the daemon dies, the helper's status
-   poll fails and it removes the icon.
+   daemon" calls `/shutdown` with a per-run token. The daemon holds the helper's stdin;
+   when the daemon exits for any reason the pipe closes and the helper disposes the icon
+   cleanly. A failed `/status` poll is the fallback.
 
 ## License
 
