@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # The --windows-* metadata flags only work when compiling on Windows.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -23,9 +24,9 @@ jobs:
       - name: Test
         run: bun test
 
-      # Bun cross-compiles: a Linux runner produces the Windows binary.
       # The tag (v1.2.0) becomes the file version (1.2.0.0) stamped into the exe.
       - name: Build
+        shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           bun build --compile --minify --target=bun-windows-x64 \
