@@ -417,4 +417,4 @@ curl -X POST "http://127.0.0.1:4466/shutdown?token=mysecret"
 | Clip cut short | Same key pressed again (toggle), another clip key (replace), or `--stop` | Expected behaviour. |
 | Old behaviour after updating the exe | OBS still has the old page | Right-click the source → **Refresh**. |
 | No tray icon, but clips work | PowerShell blocked | Stop via Task Manager or run from a terminal and use Ctrl+C. |
-| Windows SmartScreen warning on first run | Binary is unsigned | **More info → Run anyway**. One time only. |
+| "Windows protected your PC" on first run | Binary is unsigned and carries the downloaded-from-internet mark | **More info → Run anyway** once, or remove the mark for good: right-click the exe → **Properties** → tick **Unblock** → **OK** (`Unblock-File .obs-video-trigger.exe` in PowerShell). |

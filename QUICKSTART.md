@@ -5,6 +5,10 @@ then disappears.
 
 ## 1. Run it
 
+First, stop Windows from asking every time: right-click `obs-video-trigger.exe` →
+**Properties** → tick **Unblock** → **OK**. (If you already see "Windows protected your
+PC", click **More info → Run anyway** instead.)
+
 Double-click `obs-video-trigger.exe`.
 
 Nothing opens. A blue play icon appears in the tray next to the clock. That means it is

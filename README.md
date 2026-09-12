@@ -30,7 +30,16 @@ targets `bun-windows-x64` and uses `--windows-hide-console`, so neither the daem
 trigger ever opens a console window; output still appears when run from an existing
 terminal.
 
-The binary is unsigned. Windows SmartScreen prompts once on first launch.
+The binary is unsigned, so Windows shows "Windows protected your PC" the first time a
+downloaded copy runs. Two ways past it:
+
+- **One time:** click **More info → Run anyway**.
+- **Permanently, before the first run:** right-click `obs-video-trigger.exe` →
+  **Properties** → tick **Unblock** at the bottom of the General tab → **OK**. This
+  removes the "downloaded from the internet" mark, and SmartScreen no longer asks.
+  Equivalent in PowerShell: `Unblock-File .obs-video-trigger.exe`.
+
+Extracting with 7-Zip instead of Windows Explorer also skips the mark.
 
 ## Release
 
