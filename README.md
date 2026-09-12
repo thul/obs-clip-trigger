@@ -32,6 +32,18 @@ terminal.
 
 The binary is unsigned. Windows SmartScreen prompts once on first launch.
 
+## Release
+
+Push a tag and GitHub Actions builds the executable and attaches it to a release:
+
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The tag becomes the file version stamped into the exe (`v1.2.0` → `1.2.0.0`). See
+`.github/workflows/release.yml`.
+
 ## Develop
 
 ```

@@ -1,0 +1,43 @@
+name: Release
+
+# Pushing a tag such as v1.2.0 builds the Windows executable and attaches it to a
+# GitHub release for that tag.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Test
+        run: bun test
+
+      # Bun cross-compiles: a Linux runner produces the Windows binary.
+      # The tag (v1.2.0) becomes the file version (1.2.0.0) stamped into the exe.
+      - name: Build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bun build --compile --minify --target=bun-windows-x64 \
+            --windows-hide-console \
+            --windows-title="OBS Video Trigger" \
+            --windows-description="Plays a clip once in an OBS browser source" \
+            --windows-version="${VERSION}.0" \
+            --outfile dist/obs-video-trigger.exe src/main.ts
+          ls -l dist
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/obs-video-trigger.exe
+          generate_release_notes: true
