@@ -1,0 +1,14 @@
+{
+  "name": "obs-video-trigger",
+  "version": "2.0.0",
+  "description": "Plays a video once, fullscreen and unmuted, in an OBS browser source. Triggered from a Stream Deck.",
+  "module": "src/main.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "build": "bun build --compile --minify --target=bun-windows-x64 --windows-hide-console --windows-title=\"OBS Video Trigger\" --windows-description=\"Plays a clip once in an OBS browser source\" --windows-version=1.0.0.0 --outfile dist/obs-video-trigger.exe src/main.ts",
+    "test": "bun test"
+  },
+  "license": "MIT"
+}
