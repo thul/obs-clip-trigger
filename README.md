@@ -30,8 +30,11 @@ bun run build
 
 Produces `dist/obs-video-trigger.exe` (~86 MB — it embeds the Bun runtime). The build
 targets `bun-windows-x64` and uses `--windows-hide-console`, so neither the daemon nor a
-trigger ever opens a console window; output still appears when run from an existing
-terminal. The file version stamped into the exe is taken from `package.json`; the release
+trigger ever opens a console window. Run from an existing terminal, the exe attaches to
+that terminal (`src/console.ts`) so `--help`, the daemon log and error messages still
+show; because it is a GUI-subsystem program the shell does not wait for it, so the output
+lands after the prompt and `%ERRORLEVEL%` is not set — use `start /wait` when a script
+needs the exit code. The file version stamped into the exe is taken from `package.json`; the release
 workflow refuses a tag that does not match it. Releases ship a `SHA256SUMS.txt` next to
 the exe, so a download can be checked with `certutil -hashfile obs-video-trigger.exe SHA256`.
 
@@ -56,8 +59,9 @@ bun run check                  # both
 
 Layout: `src/main.ts` is the process boundary (arguments, exit codes, tray, signals);
 `src/server.ts` is the HTTP daemon, `src/client.ts` the `--play`/`--stop`/`--status`
-side, `src/args.ts` and `src/range.ts` the pure parsers, `src/overlay.ts` the browser page
-and `src/tray.ts` the PowerShell tray helper. Tests start the daemon on a random port and
+side, `src/args.ts` and `src/range.ts` the pure parsers, `src/overlay.ts` the browser page,
+`src/tray.ts` the PowerShell tray helper and `src/console.ts` the terminal output of a
+console-less exe. Tests start the daemon on a random port and
 talk to it over real HTTP.
 
 The daemon stamps the overlay page with a hash of its HTML and announces that version on

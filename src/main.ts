@@ -15,6 +15,11 @@ import { parseArgs, UsageError, DEFAULT_HOST, DEFAULT_PORT, type Options } from 
 import { commandPlay, commandStop, commandStatus, commandAudioDevices, CliError } from "./client";
 import { createDaemon } from "./server";
 import { startTray } from "./tray";
+import { createTerminal } from "./console";
+
+// All terminal output goes through these: a GUI-subsystem exe has to attach
+// to the parent console first, see console.ts.
+const { out, err } = createTerminal();
 
 const HELP = `obs-video-trigger - play a video once in an OBS browser source
 
@@ -80,15 +85,16 @@ function startDaemon(options: Options) {
       // other programs running as the same user.
       shutdownToken: process.env.OBS_VIDEO_TRIGGER_TOKEN,
       audioDevice: options.audioDevice,
+      log: out,
       onShutdown: () => setTimeout(() => shutdown(0), 50),
     });
-  } catch (err) {
-    const error = err as { code?: string };
-    if (error.code === "EADDRINUSE") {
-      console.error(`error: port ${options.port} is already in use - the daemon may already be running.`);
+  } catch (error) {
+    const failure = error as { code?: string };
+    if (failure.code === "EADDRINUSE") {
+      err(`error: port ${options.port} is already in use - the daemon may already be running.`);
       process.exit(1);
     }
-    throw err;
+    throw error;
   }
 
   if (options.tray) {
@@ -100,11 +106,11 @@ function startDaemon(options: Options) {
     process.on("exit", () => tray?.stop());
   }
 
-  console.log("obs-video-trigger daemon running.");
-  console.log(`  OBS browser source : ${daemon.base}/overlay`);
-  if (options.audioDevice) console.log(`  Audio output       : ${options.audioDevice}`);
-  console.log(`  Trigger a clip     : obs-video-trigger --play "C:\\path\\to\\clip.webm"`);
-  console.log(
+  out("obs-video-trigger daemon running.");
+  out(`  OBS browser source : ${daemon.base}/overlay`);
+  if (options.audioDevice) out(`  Audio output       : ${options.audioDevice}`);
+  out(`  Trigger a clip     : obs-video-trigger --play "C:\\path\\to\\clip.webm"`);
+  out(
     tray
       ? "  Stop with Ctrl+C, or right-click the tray icon and choose Stop daemon."
       : "  Stop with Ctrl+C.",
@@ -116,34 +122,34 @@ function startDaemon(options: Options) {
 let options: Options;
 try {
   options = parseArgs(Bun.argv.slice(2));
-} catch (err) {
-  if (!(err instanceof UsageError)) throw err;
-  console.error(`error: ${err.message}`);
+} catch (error) {
+  if (!(error instanceof UsageError)) throw error;
+  err(`error: ${error.message}`);
   process.exit(2);
 }
 
 try {
   switch (options.command) {
     case "help":
-      console.log(HELP);
+      out(HELP);
       break;
     case "play":
-      console.log(await commandPlay(options));
+      out(await commandPlay(options));
       break;
     case "stop":
-      console.log(await commandStop(options));
+      out(await commandStop(options));
       break;
     case "status":
-      console.log(await commandStatus(options));
+      out(await commandStatus(options));
       break;
     case "audio-devices":
-      console.log(await commandAudioDevices(options));
+      out(await commandAudioDevices(options));
       break;
     default:
       startDaemon(options);
   }
-} catch (err) {
-  if (!(err instanceof CliError)) throw err;
-  console.error(err.message.startsWith("warning:") ? err.message : `error: ${err.message}`);
-  process.exit(err.exitCode);
+} catch (error) {
+  if (!(error instanceof CliError)) throw error;
+  err(error.message.startsWith("warning:") ? error.message : `error: ${error.message}`);
+  process.exit(error.exitCode);
 }

@@ -276,7 +276,9 @@ obs-video-trigger.exe --help
 | `2` | Bad argument, or the file does not exist. |
 
 Messages go to the terminal. From Explorer or the Stream Deck there is no terminal, so
-use the exit code (Stream Deck multi-actions can branch on it) or `--status`.
+use the exit code (Stream Deck multi-actions can branch on it) or `--status`. The exe is a
+window-less program, so a shell prompt returns before it finishes: in a batch file use
+`start /wait obs-video-trigger.exe --play "..."` to get the exit code in `%ERRORLEVEL%`.
 
 ---
 
