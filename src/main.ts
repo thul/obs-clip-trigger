@@ -12,26 +12,51 @@
 // and signals. The HTTP daemon lives in server.ts, the client in client.ts.
 
 import { parseArgs, UsageError, DEFAULT_HOST, DEFAULT_PORT, type Options } from "./args";
-import { commandPlay, commandStop, commandStatus, CliError } from "./client";
+import { commandPlay, commandStop, commandStatus, commandAudioDevices, CliError } from "./client";
 import { createDaemon } from "./server";
 import { startTray } from "./tray";
 
 const HELP = `obs-video-trigger - play a video once in an OBS browser source
 
 Usage:
-  obs-video-trigger                        Start the daemon (default).
-  obs-video-trigger --play <file>          Play a video file in the overlay.
-  obs-video-trigger <file>                 Same as --play.
-  obs-video-trigger --stop                 Hide the overlay immediately.
-  obs-video-trigger --status               Print daemon state as JSON.
+  obs-video-trigger [daemon options]         Start the daemon (default).
+  obs-video-trigger --play <file> [options]  Play a video file in the overlay.
+  obs-video-trigger <file> [options]         Same as --play.
+  obs-video-trigger --stop                   Hide the overlay immediately.
+  obs-video-trigger --status                 Print daemon state as JSON.
+  obs-video-trigger --list-audio-devices     List the audio output devices the
+                                             overlay can play through.
+  obs-video-trigger --help                   Show this help.
 
-Options:
-  --host <addr>     Address the daemon listens on (default ${DEFAULT_HOST}).
-  --port <number>   Port (default ${DEFAULT_PORT}).
-  --volume <0..1>   Playback volume for this clip (default 1).
-  --fit <mode>      CSS object-fit: contain, cover or fill (default contain).
-  --no-tray         Do not show the Windows tray icon (daemon only).
-  -h, --help        Show this help.
+Daemon options (only with no command):
+  --host <addr>            Address to listen on (default ${DEFAULT_HOST}).
+                           0.0.0.0 accepts triggers from the network.
+  --port <number>          Port to listen on (default ${DEFAULT_PORT}).
+  --audio-device <name>    Play clip audio through this output device. <name>
+                           is part of a device name from --list-audio-devices
+                           (case-insensitive) or a device id. Not given: audio
+                           stays with the OBS browser source. In OBS untick
+                           "Control audio via OBS" on the source for this to
+                           take effect.
+  --no-tray                Do not show the Windows tray icon.
+
+Play options (with --play or a bare file):
+  --volume <0..1>          Playback volume for this clip (default 1).
+  --fit <mode>             How the video fills the source: contain (letterbox),
+                           cover (crop) or fill (stretch) (default contain).
+  --interrupt              Accepted for compatibility; replacing is the default.
+
+Connection options (any command):
+  --host <addr>            Daemon address (default ${DEFAULT_HOST}).
+  --port <number>          Daemon port (default ${DEFAULT_PORT}).
+
+Other:
+  -h, --help               Show this help.
+
+Environment:
+  OBS_VIDEO_TRIGGER_TOKEN  Pin the /shutdown token instead of a random one.
+
+Exit codes: 0 delivered, 1 daemon or overlay missing, 2 bad argument or file.
 
 OBS browser source URL:  http://${DEFAULT_HOST}:${DEFAULT_PORT}/overlay
 `;
@@ -54,6 +79,7 @@ function startDaemon(options: Options) {
       // helper's command line, so it is a guard against web pages, not against
       // other programs running as the same user.
       shutdownToken: process.env.OBS_VIDEO_TRIGGER_TOKEN,
+      audioDevice: options.audioDevice,
       onShutdown: () => setTimeout(() => shutdown(0), 50),
     });
   } catch (err) {
@@ -76,6 +102,7 @@ function startDaemon(options: Options) {
 
   console.log("obs-video-trigger daemon running.");
   console.log(`  OBS browser source : ${daemon.base}/overlay`);
+  if (options.audioDevice) console.log(`  Audio output       : ${options.audioDevice}`);
   console.log(`  Trigger a clip     : obs-video-trigger --play "C:\\path\\to\\clip.webm"`);
   console.log(
     tray
@@ -108,6 +135,9 @@ try {
       break;
     case "status":
       console.log(await commandStatus(options));
+      break;
+    case "audio-devices":
+      console.log(await commandAudioDevices(options));
       break;
     default:
       startDaemon(options);

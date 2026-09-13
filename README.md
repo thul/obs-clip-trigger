@@ -9,6 +9,8 @@ Stream Deck, a chat bot, a batch file, or anything else that can open and reach 
 - Runs as a background daemon with a tray icon.
 - Any video file on disk; nothing has to be copied into a special folder.
 - Same clip triggered again while playing → stops it. Different clip → replaces it.
+- Audio goes through the OBS browser source by default, or to a Windows output device of
+  your choice with `--audio-device`.
 
 ## Documentation
 
@@ -61,16 +63,6 @@ talk to it over real HTTP.
 The daemon stamps the overlay page with a hash of its HTML and announces that version on
 the event stream, so an overlay left open in OBS reloads itself after a rebuild.
 
-## Layout
-
-```
-src/main.ts        CLI parsing, daemon (Bun.serve), HTTP routes, SSE broadcast
-src/overlay.ts     The overlay page (HTML + inline script) as a string
-src/tray.ts        Windows tray icon via a hidden PowerShell helper
-tests/             Fake-DOM tests for the overlay script
-dist/              Build output (ignored by git)
-```
-
 ## How it works
 
 ```
@@ -85,7 +77,9 @@ Stream Deck ──GET /play?file=…──▶ daemon (127.0.0.1:4466) ──SSE�
    to every connected overlay over server-sent events.
 3. The overlay page sets `<video src="/media/<id>">`, plays it unmuted, and hides itself
    on `ended`. A second `play` for the same file toggles it off; any other file replaces
-   it.
+   it. With `--audio-device` the page routes its audio to that device with `setSinkId()`;
+   it reports the devices it can see to the daemon so `--list-audio-devices` can show
+   them.
 4. Only files that have been registered through `/play` are served from `/media`, so the
    page cannot be used to read arbitrary files. Browser requests from other sites are
    refused on `/play` and `/stop`, and a non-loopback `Host` header is refused everywhere

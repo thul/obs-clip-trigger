@@ -30,7 +30,12 @@ type PlayEvent = {
   src: string;
   volume: number;
   fit: FitMode;
+  // Audio output device the overlay should play through; "" means default.
+  sink: string;
 };
+
+// One entry of the list an overlay reports from enumerateDevices().
+export type AudioDevice = { id: string; label: string };
 
 // Identifies this build of the overlay page. An already-open page compares it
 // against its own stamp and reloads when they differ, so a rebuilt daemon does
@@ -62,6 +67,10 @@ export type DaemonOptions = {
   // Random per run unless pinned, so only the tray helper the daemon started
   // (or a script that knows the value) can stop it.
   shutdownToken?: string;
+  // Name (substring of the label) or browser device id of the audio output
+  // device clips should play through. Forwarded to the overlay, which does
+  // the actual routing with setSinkId(). Empty leaves the browser default.
+  audioDevice?: string;
   log?: (message: string) => void;
   // Called after /shutdown was accepted; the caller decides how to exit.
   onShutdown?: () => void;
@@ -77,7 +86,13 @@ export type Daemon = {
 export function createDaemon(options: DaemonOptions): Daemon {
   const log = options.log ?? console.log;
   const shutdownToken = options.shutdownToken || randomUUID();
+  const audioDevice = options.audioDevice ?? "";
   const encoder = new TextEncoder();
+
+  // The audio output devices as the overlay page sees them. Only the browser
+  // can enumerate them (the ids are browser-specific), so the overlay reports
+  // the list on connect and whenever it changes; the last report wins.
+  let audioDevices: AudioDevice[] = [];
 
   const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 
@@ -109,7 +124,7 @@ export function createDaemon(options: DaemonOptions): Daemon {
         clients.add(controller);
         controller.enqueue(encoder.encode("retry: 1000\n\n"));
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ type: "hello", version: OVERLAY_VERSION })}\n\n`),
+          encoder.encode(`data: ${JSON.stringify({ type: "hello", version: OVERLAY_VERSION, sink: audioDevice })}\n\n`),
         );
         log(`overlay connected (${clients.size} total)`);
       },
@@ -178,6 +193,7 @@ export function createDaemon(options: DaemonOptions): Daemon {
       src: `/media/${id}`,
       volume: Number.isFinite(volume) ? Math.min(Math.max(volume, 0), 1) : 1,
       fit: isFitMode(params.fit) ? params.fit : "contain",
+      sink: audioDevice,
     };
 
     const overlays = broadcast(event);
@@ -219,6 +235,16 @@ export function createDaemon(options: DaemonOptions): Daemon {
     });
   }
 
+  async function handleDeviceReport(req: Request) {
+    const body = (await req.json().catch(() => null)) as { devices?: unknown } | null;
+    if (!body || !Array.isArray(body.devices)) return json({ ok: false, error: "expected {devices: [...]}" }, 400);
+    audioDevices = body.devices
+      .filter((d): d is AudioDevice => typeof d === "object" && d !== null && typeof (d as AudioDevice).id === "string")
+      .map((d) => ({ id: d.id, label: String(d.label ?? "") }));
+    log(`overlay reported ${audioDevices.length} audio output device(s)`);
+    return json({ ok: true });
+  }
+
   // Requests from a browser tab carry Sec-Fetch-Site. A page on another site
   // must not be able to fire or stop clips on the stream; direct navigation
   // ("none") and the overlay's own origin are fine. Stream Deck, curl and the
@@ -252,15 +278,22 @@ export function createDaemon(options: DaemonOptions): Daemon {
 
       if (path === "/events") return eventStream();
 
-      if (path === "/play" || path === "/stop") {
+      if (path === "/play" || path === "/stop" || (path === "/audio-devices" && req.method === "POST")) {
         if (isForeignPage(req)) return json({ ok: false, error: "cross-site request refused" }, 403);
         if (path === "/play") return handlePlay(req, url);
+        if (path === "/audio-devices") return handleDeviceReport(req);
         const overlays = broadcast({ type: "stop" });
         return json({ ok: true, overlays });
       }
 
       if (path === "/status") {
-        return json({ ok: true, overlays: clients.size, clips: served, port: boundPort });
+        return json({ ok: true, overlays: clients.size, clips: served, port: boundPort, audioDevice });
+      }
+
+      // The list only exists while an overlay is connected to report it.
+      if (path === "/audio-devices") {
+        if (clients.size === 0) return json({ ok: false, error: "no overlay connected - is the OBS browser source running?" }, 503);
+        return json({ ok: true, overlays: clients.size, audioDevice, devices: audioDevices });
       }
 
       // Used by the tray icon's "Stop daemon" item. The token is generated at

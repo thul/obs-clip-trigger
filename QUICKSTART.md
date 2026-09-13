@@ -62,5 +62,8 @@ Handy extra key — clears the screen at any time:
   **Refresh**.
 - **No sound?** In OBS, tick **Control audio via OBS** on the browser source and check
   its channel in the mixer.
+- **Want the sound on your headset instead of the stream?** Run
+  `obs-video-trigger.exe --list-audio-devices`, then start the daemon with
+  `obs-video-trigger.exe --audio-device "Headset"` and untick **Control audio via OBS**.
 
 Full details: [REFERENCE.md](REFERENCE.md).

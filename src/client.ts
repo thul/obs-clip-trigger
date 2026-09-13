@@ -76,3 +76,28 @@ export async function commandStatus(options: Options): Promise<string> {
   const response = await request(options, "/status");
   return JSON.stringify(await readJson(options, response));
 }
+
+type DevicesReply = {
+  ok: boolean;
+  overlays?: number;
+  audioDevice?: string;
+  devices?: Array<{ id: string; label: string }>;
+  error?: string;
+};
+
+export async function commandAudioDevices(options: Options): Promise<string> {
+  const response = await request(options, "/audio-devices");
+  const result = await readJson<DevicesReply>(options, response);
+  if (!response.ok || !result.ok) throw new CliError(result.error ?? response.statusText);
+
+  const devices = result.devices ?? [];
+  const lines = [`Audio output devices seen by the overlay (${result.overlays} connected):`];
+  if (devices.length === 0) {
+    lines.push("  no audio output devices reported - the overlay may still be enumerating, try again");
+  } else {
+    for (const device of devices) lines.push(`  ${device.label || "(unnamed)"}   [${device.id}]`);
+  }
+  if (result.audioDevice) lines.push(`Currently bound to: ${result.audioDevice}`);
+  lines.push('Bind one with: obs-video-trigger --audio-device "<name>"');
+  return lines.join("\n");
+}

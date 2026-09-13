@@ -70,12 +70,39 @@ Only one daemon can run per port. Starting a second one prints
 | `--port <number>` | `4466` | Port to listen on. Every trigger and the OBS URL must use the same port. |
 | `--host <addr>` | `127.0.0.1` | Address to listen on. `0.0.0.0` accepts triggers from other machines on your network. |
 | `--no-tray` | off | Do not show the tray icon. |
+| `--audio-device <name>` | none | Play clip audio through this Windows output device instead of the OBS browser source. See [Audio output device](#audio-output-device). |
 
 Example — run on a different port, no tray icon:
 
 ```
 obs-video-trigger.exe --port 5000 --no-tray
 ```
+
+### Audio output device
+
+By default the clip's sound comes out of the OBS browser source, where OBS mixes it into
+the stream. `--audio-device` sends it to a specific Windows output device instead — a
+headset, a second sound card, a virtual cable:
+
+```
+obs-video-trigger.exe --list-audio-devices
+obs-video-trigger.exe --audio-device "Headset"
+```
+
+`--list-audio-devices` asks the running daemon for the output devices the overlay page can
+see and prints one per line with its browser id. It needs an overlay connected (OBS or a
+browser tab on the overlay page). `<name>` is any part of a listed name, case-insensitive,
+or the id in brackets. The first device whose name contains it wins.
+
+Two things to know:
+
+- In OBS, **untick "Control audio via OBS"** on the browser source. Ticked, OBS captures
+  the page's audio itself and the device binding has no effect. Unticked, the sound goes
+  straight to the chosen Windows device and does not reach the stream unless that device
+  is captured by OBS (a virtual cable, or "Desktop Audio" set to it).
+- The routing is done by the overlay page with the browser's `setSinkId()`. If the name
+  matches nothing, or the browser refuses the device, the clip still plays on the default
+  output and the [debug view](#debug-view) says why.
 
 ### Environment variables
 
@@ -137,6 +164,8 @@ status label in the bottom-left corner of the source:
 | `disconnected, reconnecting` | Lost the daemon; reconnects automatically. |
 | `autoplay blocked (...), retrying muted` | The browser refused unmuted autoplay; the clip plays silently. Does not happen inside OBS. |
 | `error loading clip` | The file could not be decoded. |
+| `audio device not found: <name>, using default` | `--audio-device` matched none of the devices the page can see. Check `--list-audio-devices`. |
+| `audio device rejected (...), using default` | The browser refused to route audio to that device. |
 
 Remove `?debug=1` when done.
 
@@ -192,7 +221,7 @@ obs-video-trigger.exe --status
 Prints:
 
 ```json
-{"ok":true,"overlays":1,"clips":3,"port":4466}
+{"ok":true,"overlays":1,"clips":3,"port":4466,"audioDevice":""}
 ```
 
 | Field | Meaning |
@@ -200,6 +229,25 @@ Prints:
 | `overlays` | Number of OBS browser sources (or browser tabs) currently connected. `0` means nothing will play. |
 | `clips` | Distinct files triggered since the daemon started. |
 | `port` | Port the daemon is listening on. |
+| `audioDevice` | The `--audio-device` the daemon was started with; empty when audio stays in the browser source. |
+
+### List audio output devices
+
+```
+obs-video-trigger.exe --list-audio-devices
+```
+
+Prints the output devices the connected overlay can see, for use with the daemon's
+`--audio-device` option (see [Audio output device](#audio-output-device)):
+
+```
+Audio output devices seen by the overlay (1 connected):
+  Speakers (Realtek(R) Audio)   [a1b2c3...]
+  Headphones (USB Audio Device)   [d4e5f6...]
+Bind one with: obs-video-trigger --audio-device "<name>"
+```
+
+Exits `1` with `no overlay connected` when nothing is showing the overlay page.
 
 ### Targeting a daemon on another port or host
 
@@ -370,15 +418,17 @@ Base URL: `http://127.0.0.1:4466` (or whatever `--host`/`--port` the daemon uses
 |---|---|---|---|
 | `GET` / `POST` | `/play` | `file` (required) — absolute path on the daemon's machine. `volume` (0–1). `fit` (`contain`, `cover`, `fill`; anything else falls back to `contain`). | `{"ok":true,"file":"<absolute path>","overlays":<n>}`, `400` for a missing or relative `file`, `404 {"ok":false,"error":"no such file: ..."}` |
 | `GET` / `POST` | `/stop` | — | `{"ok":true,"overlays":<n>}` |
-| `GET` | `/status` | — | `{"ok":true,"overlays":<n>,"clips":<n>,"port":<n>}` |
+| `GET` | `/status` | — | `{"ok":true,"overlays":<n>,"clips":<n>,"port":<n>,"audioDevice":"<name>"}` |
+| `GET` | `/audio-devices` | — | `{"ok":true,"overlays":<n>,"audioDevice":"<name>","devices":[{"id":"...","label":"..."}]}` as last reported by an overlay; `503` when no overlay is connected. |
+| `POST` | `/audio-devices` | JSON `{"devices":[{"id","label"}]}` | Used by the overlay page to report its output devices. `{"ok":true}`; `400` on a malformed body. |
 | `GET` | `/overlay` | `debug=1` (optional) | The overlay HTML page |
-| `GET` | `/events` | — | Server-sent event stream used by the overlay page. Emits `hello`, `play` and `stop` events. |
+| `GET` | `/events` | — | Server-sent event stream used by the overlay page. Emits `hello`, `play` and `stop` events; `hello` and `play` carry `sink`, the `--audio-device` name. |
 | `GET` | `/media/<id>` | Range header supported | Streams a file that has been triggered. Ids are internal; the overlay page uses them. |
 | `POST` | `/shutdown` | `token` (required) | `{"ok":true}` then the daemon exits. `403` on a bad token. |
 
 `POST` bodies may be JSON with the same parameter names.
 
-`/play` and `/stop` answer `403` to requests that a browser labels as coming from another
+`/play`, `/stop` and `POST /audio-devices` answer `403` to requests that a browser labels as coming from another
 website (a `Sec-Fetch-Site` header other than `none` or `same-origin`). Typing the URL
 into the address bar, a Stream Deck, curl and the CLI are unaffected. Every endpoint
 answers `403` when the `Host` header is not a loopback name while the daemon is bound to
@@ -427,6 +477,8 @@ curl -X POST "http://127.0.0.1:4466/shutdown?token=mysecret"
 | `error: no such file: ...` | Wrong path, or drive not mounted | Paste the path into Explorer. Keep quotes around it. |
 | `error: port 4466 is already in use` | A daemon is already running, or another program has the port | Check the tray. Otherwise use `--port` on the daemon **and** update every URL and key. |
 | Clip plays silently | Browser source audio not routed, or `--volume 0` | Tick **Control audio via OBS**; check the mixer channel; check the key's `--volume`. |
+| `--audio-device` has no effect | **Control audio via OBS** is ticked, or the name matches nothing | Untick it on the browser source. Compare the name with `--list-audio-devices`; open the overlay with `?debug=1` to see the reason. |
+| Clip audible on the device but not on the stream | `--audio-device` sends sound past OBS | Expected. Capture that device in OBS (virtual cable or Desktop Audio), or drop `--audio-device`. |
 | Black box around the clip | File has no alpha channel | Re-encode to VP9 WebM with `yuva420p`. |
 | Clip letterboxed / cropped unexpectedly | Source size ≠ canvas, or `--fit` | Match width/height to the canvas; choose `--fit`. |
 | Clip cut short | Same key pressed again (toggle), another clip key (replace), or `--stop` | Expected behaviour. |

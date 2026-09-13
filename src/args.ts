@@ -15,13 +15,16 @@ export function isFitMode(value: unknown): value is FitMode {
 export class UsageError extends Error {}
 
 export type Options = {
-  command: "daemon" | "play" | "stop" | "status" | "help";
+  command: "daemon" | "play" | "stop" | "status" | "audio-devices" | "help";
   file: string;
   host: string;
   port: number;
   volume: number;
   fit: FitMode;
   tray: boolean;
+  // Daemon only: name (or browser device id) of the audio output device the
+  // overlay should send clip audio to. Empty means leave the browser default.
+  audioDevice: string;
 };
 
 export function parseArgs(argv: string[]): Options {
@@ -33,6 +36,7 @@ export function parseArgs(argv: string[]): Options {
     volume: 1,
     fit: "contain",
     tray: true,
+    audioDevice: "",
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -54,6 +58,12 @@ export function parseArgs(argv: string[]): Options {
         break;
       case "--status":
         options.command = "status";
+        break;
+      case "--list-audio-devices":
+        options.command = "audio-devices";
+        break;
+      case "--audio-device":
+        options.audioDevice = value();
         break;
       case "--daemon":
       case "--serve":

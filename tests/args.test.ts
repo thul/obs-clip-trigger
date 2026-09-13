@@ -65,3 +65,15 @@ test("--fit accepts contain, cover and fill only", () => {
   expect(parseArgs(["--fit", "cover"]).fit).toBe("cover");
   expect(() => parseArgs(["--fit", "stretch"])).toThrow("--fit must be contain, cover or fill");
 });
+
+test("--audio-device takes the device name", () => {
+  const options = parseArgs(["--audio-device", "Speakers (Realtek)"]);
+  expect(options.command).toBe("daemon");
+  expect(options.audioDevice).toBe("Speakers (Realtek)");
+  expect(parseArgs([]).audioDevice).toBe("");
+  expect(() => parseArgs(["--audio-device"])).toThrow("--audio-device needs a value");
+});
+
+test("--list-audio-devices sets the command", () => {
+  expect(parseArgs(["--list-audio-devices"]).command).toBe("audio-devices");
+});

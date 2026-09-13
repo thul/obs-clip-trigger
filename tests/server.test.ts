@@ -19,6 +19,7 @@ beforeAll(() => {
     host: "127.0.0.1",
     port: 0,
     shutdownToken: "secret",
+    audioDevice: "Speakers",
     log: () => {},
     onShutdown: () => {
       shutdowns += 1;
@@ -165,6 +166,53 @@ test("status reports counts", async () => {
   expect(status.clips).toBe(1);
   expect(typeof status.overlays).toBe("number");
   expect(status.port).toBe(daemon.server.port);
+  expect(status.audioDevice).toBe("Speakers");
+});
+
+test("hello and play carry the bound audio device", async () => {
+  const events = await openEvents();
+  expect(await events.next()).toMatchObject({ type: "hello", sink: "Speakers" });
+  await play({ file: CLIP });
+  expect((await events.next()).sink).toBe("Speakers");
+  events.close();
+});
+
+test("audio devices are unavailable while no overlay is connected", async () => {
+  const response = await fetch(`${base}/audio-devices`);
+  expect(response.status).toBe(503);
+  expect((await response.json()).error).toContain("no overlay connected");
+});
+
+test("an overlay reports its audio devices and the daemon lists them", async () => {
+  const events = await openEvents();
+  await events.next();
+  const devices = [{ id: "abc", label: "Speakers (Realtek)" }, { id: "default", label: "Default" }];
+  const report = await fetch(`${base}/audio-devices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ devices }),
+  });
+  expect((await report.json()).ok).toBe(true);
+  const list = await (await fetch(`${base}/audio-devices`)).json();
+  expect(list).toEqual({ ok: true, overlays: 1, audioDevice: "Speakers", devices });
+  events.close();
+});
+
+test("a malformed device report is 400", async () => {
+  const events = await openEvents();
+  await events.next();
+  const response = await fetch(`${base}/audio-devices`, { method: "POST", body: "nope" });
+  expect(response.status).toBe(400);
+  events.close();
+});
+
+test("a cross-site page cannot report audio devices", async () => {
+  const response = await fetch(`${base}/audio-devices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ devices: [] }),
+  });
+  expect(response.status).toBe(403);
 });
 
 test("media serves a triggered file whole", async () => {

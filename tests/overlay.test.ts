@@ -31,20 +31,35 @@ function fakeElement() {
     },
     playResult: Promise.resolve() as Promise<void>,
     play() { return this.playResult; },
+    sinkId: "",
+    sinkCalls: 0,
+    setSinkId(id: string) { this.sinkId = id; this.sinkCalls += 1; return Promise.resolve(); },
     pause: () => {},
     load: () => {},
     visible: () => classes.has("visible"),
   };
 }
 
+type Device = { deviceId: string; kind: string; label: string };
+
 type Harness = {
   player: ReturnType<typeof fakeElement>;
   send: (event: unknown) => void;
   reloads: () => number;
   debug: () => boolean;
+  reports: () => unknown[];
+  permissionRequests: () => number;
+  deviceChange: () => void;
+  setDevices: (devices: Device[]) => void;
 };
 
-function loadOverlay(search = ""): Harness {
+const SPEAKERS: Device = { deviceId: "spk", kind: "audiooutput", label: "Speakers (Realtek)" };
+const HEADSET: Device = { deviceId: "hs", kind: "audiooutput", label: "Headset Earphone" };
+const MIC: Device = { deviceId: "mic", kind: "audioinput", label: "Microphone" };
+
+const tick = () => new Promise((done) => setTimeout(done, 0));
+
+function loadOverlay(search = "", devices: Device[] = [SPEAKERS, HEADSET, MIC]): Harness {
   const script = OVERLAY_HTML.split("<script>")[1]!.split("</script>")[0]!;
 
   const player = fakeElement();
@@ -64,6 +79,28 @@ function loadOverlay(search = ""): Harness {
   };
   let reloads = 0;
   const location = { search, reload: () => { reloads += 1; } };
+
+  const reports: unknown[] = [];
+  const fetch = (url: string, init: { method: string; body: string }) => {
+    if (url === "/audio-devices" && init.method === "POST") reports.push(JSON.parse(init.body));
+    return Promise.resolve({ ok: true });
+  };
+  let permissionRequests = 0;
+  const deviceListeners: Array<() => void> = [];
+  const navigator = {
+    mediaDevices: {
+      enumerateDevices: () => Promise.resolve(devices.map((d) => ({ ...d }))),
+      getUserMedia: () => {
+        permissionRequests += 1;
+        // Granting permission is what makes labels visible.
+        devices = devices.map((d) => ({ ...d, label: d.label || d.deviceId + " label" }));
+        return Promise.resolve({ getTracks: () => [{ stop: () => {} }] });
+      },
+      addEventListener: (type: string, handler: () => void) => {
+        if (type === "devicechange") deviceListeners.push(handler);
+      },
+    },
+  };
   class EventSource {
     onmessage: ((event: { data: string }) => void) | null = null;
     onopen: (() => void) | null = null;
@@ -75,11 +112,13 @@ function loadOverlay(search = ""): Harness {
     }
   }
 
-  new Function("document", "location", "EventSource", "URLSearchParams", script)(
+  new Function("document", "location", "EventSource", "URLSearchParams", "navigator", "fetch", script)(
     document,
     location,
     EventSource,
     URLSearchParams,
+    navigator,
+    fetch,
   );
 
   return {
@@ -90,6 +129,10 @@ function loadOverlay(search = ""): Harness {
     },
     reloads: () => reloads,
     debug: () => bodyClasses.has("debug"),
+    reports: () => reports,
+    permissionRequests: () => permissionRequests,
+    deviceChange: () => deviceListeners.forEach((handler) => handler()),
+    setDevices: (next) => { devices = next; },
   };
 }
 
@@ -101,6 +144,7 @@ const CLIP_A = {
   src: "/media/1",
   volume: 1,
   fit: "contain",
+  sink: "",
 };
 const CLIP_B = { ...CLIP_A, id: "2", name: "b.webm", file: "C:\\clips\\b.webm", src: "/media/2" };
 
@@ -108,8 +152,9 @@ let overlay: Harness;
 
 beforeEach(async () => {
   overlay = loadOverlay();
-  // Let the EventSource stub hand over its onmessage handler.
-  await Promise.resolve();
+  // Let the EventSource stub hand over its onmessage handler and the first
+  // device report go out.
+  await tick();
 });
 
 test("starts hidden", () => {
@@ -251,4 +296,64 @@ test("?debug=1 turns the status box on", () => {
 
 test("a parameter merely containing 'debug' does not", () => {
   expect(loadOverlay("?file=debugging.mp4").debug()).toBe(false);
+});
+
+// Audio output routing. Only the browser can see output devices, so the page
+// reports them to the daemon and applies the daemon's chosen device itself.
+test("output devices are reported to the daemon on load", () => {
+  expect(overlay.reports()).toEqual([
+    { devices: [{ id: "spk", label: "Speakers (Realtek)" }, { id: "hs", label: "Headset Earphone" }] },
+  ]);
+  expect(overlay.permissionRequests()).toBe(0);
+});
+
+test("hidden labels trigger one permission request before reporting", async () => {
+  const unlabeled = [SPEAKERS, HEADSET].map((d) => ({ ...d, label: "" }));
+  const page = loadOverlay("", unlabeled);
+  await tick();
+  expect(page.permissionRequests()).toBe(1);
+  expect(page.reports()).toEqual([{ devices: [{ id: "spk", label: "spk label" }, { id: "hs", label: "hs label" }] }]);
+});
+
+test("a device change sends a fresh report", async () => {
+  overlay.setDevices([HEADSET]);
+  overlay.deviceChange();
+  await tick();
+  expect(overlay.reports()).toHaveLength(2);
+  expect(overlay.reports()[1]).toEqual({ devices: [{ id: "hs", label: "Headset Earphone" }] });
+});
+
+test("no sink leaves the browser's output device alone", () => {
+  overlay.send(CLIP_A);
+  expect(overlay.player.sinkCalls).toBe(0);
+});
+
+test("a sink is matched against device labels, case-insensitively", () => {
+  overlay.send({ ...CLIP_A, sink: "realtek" });
+  expect(overlay.player.sinkId).toBe("spk");
+  expect(overlay.player.visible()).toBe(true);
+});
+
+test("a sink can also be a device id", () => {
+  overlay.send({ ...CLIP_A, sink: "hs" });
+  expect(overlay.player.sinkId).toBe("hs");
+});
+
+test("an unknown sink plays on the default device", () => {
+  overlay.send({ ...CLIP_A, sink: "Bluetooth" });
+  expect(overlay.player.sinkId).toBe("");
+  expect(overlay.player.visible()).toBe(true);
+});
+
+test("dropping the sink returns to the default device", () => {
+  overlay.send({ ...CLIP_A, sink: "headset" });
+  expect(overlay.player.sinkId).toBe("hs");
+  overlay.send(CLIP_B);
+  expect(overlay.player.sinkId).toBe("");
+});
+
+test("an already applied sink is not reapplied on every play", () => {
+  overlay.send({ ...CLIP_A, sink: "headset" });
+  overlay.send({ ...CLIP_B, sink: "headset" });
+  expect(overlay.player.sinkCalls).toBe(1);
 });

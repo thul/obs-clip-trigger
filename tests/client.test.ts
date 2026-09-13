@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDaemon, type Daemon } from "../src/server";
-import { commandPlay, commandStop, commandStatus, CliError } from "../src/client";
+import { commandPlay, commandStop, commandStatus, commandAudioDevices, CliError } from "../src/client";
 import { parseArgs } from "../src/args";
 
 const dir = mkdtempSync(join(tmpdir(), "obs-video-trigger-cli-"));
@@ -63,4 +63,38 @@ test("a non-JSON reply from something else on the port is a clear error", async 
   const error = await commandPlay(options).catch((e) => e);
   expect(error).toBeInstanceOf(CliError);
   expect(error.message).toContain("unexpected reply");
+});
+
+test("listing audio devices needs an overlay", async () => {
+  const options = withPort(daemon.server.port!, "--list-audio-devices");
+  await expect(commandAudioDevices(options)).rejects.toThrow("no overlay connected");
+});
+
+test("listing audio devices prints one device per line", async () => {
+  const events = await fetch(`${daemon.base}/events`);
+  await fetch(`${daemon.base}/audio-devices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ devices: [{ id: "spk", label: "Speakers (Realtek)" }, { id: "hs", label: "Headset" }] }),
+  });
+  const options = withPort(daemon.server.port!, "--list-audio-devices");
+  expect(await commandAudioDevices(options)).toBe(
+    "Audio output devices seen by the overlay (1 connected):\n" +
+      "  Speakers (Realtek)   [spk]\n" +
+      "  Headset   [hs]\n" +
+      "Bind one with: obs-video-trigger --audio-device \"<name>\"",
+  );
+  await events.body!.cancel();
+});
+
+test("an empty device list says so", async () => {
+  const events = await fetch(`${daemon.base}/events`);
+  await fetch(`${daemon.base}/audio-devices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ devices: [] }),
+  });
+  const options = withPort(daemon.server.port!, "--list-audio-devices");
+  expect(await commandAudioDevices(options)).toContain("no audio output devices reported");
+  await events.body!.cancel();
 });
